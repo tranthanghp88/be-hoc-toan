@@ -30,6 +30,87 @@ const TRY_AGAIN_MESSAGES = [
   "Tính lại xíu thôi là đúng rồi con nè!"
 ];
 
+const removeAccents = (str: string): string => {
+  return str
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/đ/g, 'd')
+    .replace(/Đ/g, 'D');
+};
+
+const normalizeDayOfWeek = (str: string): string => {
+  let s = str.trim().toLowerCase().replace(/\s+/g, '');
+  s = removeAccents(s);
+  if (s === 'chunhat' || s === 'cn') return 'chunhat';
+  if (s === 'thuhai' || s === 'thu2' || s === '2') return 'thuhai';
+  if (s === 'thuba' || s === 'thu3' || s === '3') return 'thuba';
+  if (s === 'thutu' || s === 'thu4' || s === '4') return 'thutu';
+  if (s === 'thunam' || s === 'thu5' || s === '5') return 'thunam';
+  if (s === 'thusau' || s === 'thu6' || s === '6') return 'thusau';
+  if (s === 'thubay' || s === 'thu7' || s === '7') return 'thubay';
+  return s;
+};
+
+// Component vẽ mặt đồng hồ kim động bằng SVG
+function SvgClock({ hour }: { hour: number }) {
+  const angle = hour * 30; // 30 độ mỗi giờ (360 / 12)
+  const ticks = Array.from({ length: 12 }, (_, i) => i + 1);
+
+  return (
+    <svg width="100%" height="100%" viewBox="0 0 100 100" className="select-none">
+      {/* Viền ngoài đồng hồ */}
+      <circle cx="50" cy="50" r="45" stroke="#475569" strokeWidth="2.5" fill="#ffffff" />
+      {/* Tâm đồng hồ */}
+      <circle cx="50" cy="50" r="3" fill="#1e293b" />
+      
+      {/* Vạch chia giờ & Số giờ */}
+      {ticks.map(t => {
+        const rad = (t * 30 * Math.PI) / 180;
+        const xTickStart = 50 + 38 * Math.sin(rad);
+        const yTickStart = 50 - 38 * Math.cos(rad);
+        const xTickEnd = 50 + 42 * Math.sin(rad);
+        const yTickEnd = 50 - 42 * Math.cos(rad);
+        
+        const xText = 50 + 31 * Math.sin(rad);
+        const yText = 50 - 31 * Math.cos(rad) + 2.5; // lệch nhẹ để căn giữa dọc chữ
+        
+        return (
+          <g key={t}>
+            {/* Vạch giờ */}
+            <line x1={xTickStart} y1={yTickStart} x2={xTickEnd} y2={yTickEnd} stroke="#64748b" strokeWidth="1.2" />
+            {/* Chữ số giờ */}
+            <text x={xText} y={yText} fontSize="8.5" fontWeight="900" textAnchor="middle" fill="#334155" fontFamily="sans-serif">
+              {t}
+            </text>
+          </g>
+        );
+      })}
+      
+      {/* Kim Giờ (Ngắn và dày hơn) */}
+      <line
+        x1="50"
+        y1="50"
+        x2={50 + 22 * Math.sin((angle * Math.PI) / 180)}
+        y2={50 - 22 * Math.cos((angle * Math.PI) / 180)}
+        stroke="#1e293b"
+        strokeWidth="3.5"
+        strokeLinecap="round"
+      />
+      
+      {/* Kim Phút (Dài và mỏng hơn, luôn chỉ 12 ở giờ đúng) */}
+      <line
+        x1="50"
+        y1="50"
+        x2="50"
+        y2="18"
+        stroke="#ef4444"
+        strokeWidth="2"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
 export default function QuizActive({
   config,
   questions,
@@ -44,7 +125,7 @@ export default function QuizActive({
   const [isChecked, setIsChecked] = useState<boolean>(false);
   const [isCorrect, setIsCorrect] = useState<boolean>(false);
   const [attempts, setAttempts] = useState<number>(0);
-  const [userAnswers, setUserAnswers] = useState<number[]>([]);
+  const [userAnswers, setUserAnswers] = useState<(number | string)[]>([]);
   const [feedback, setFeedback] = useState<string>('');
   const [mascotState, setMascotState] = useState<'idle' | 'correct' | 'thinking' | 'wrong' | 'winner'>('idle');
   
@@ -68,7 +149,7 @@ export default function QuizActive({
     setFeedback('');
     setMascotState('idle');
     
-    // Đảm bảo focus lập tức và liên tiếp ở các mốc thời gian khác nhau để bảo toàn focus kể cả khi đang có animation chuyển trang
+    // Đảm bảo focus lập tức và liên tiếp ở các mốc thời gian khác nhau để bảo toàn focus
     const focusTimes = [10, 50, 150, 300, 500];
     const timers = focusTimes.map(ms => setTimeout(() => {
       const activeInput = document.getElementById(`math-answer-input-${currentQuestion.id}`) as HTMLInputElement | null;
@@ -114,9 +195,14 @@ export default function QuizActive({
       if (inputValue === '') return;
       handleCheck();
     } else {
-      // Giới hạn nhập tối đa 4 chữ số thích hợp lớp 3
-      if (inputValue.length < 4) {
-        setInputValue(prev => prev + val);
+      if (currentQuestion.operator === 'So sánh') {
+        // Chỉ lưu 1 ký tự duy nhất cho dấu so sánh
+        setInputValue(val);
+      } else {
+        // Giới hạn nhập tối đa 4 chữ số thích hợp lớp 3
+        if (inputValue.length < 4) {
+          setInputValue(prev => prev + val);
+        }
       }
     }
     
@@ -144,8 +230,7 @@ export default function QuizActive({
     return () => window.removeEventListener('keydown', handlePhysicalKeyDown);
   }, [inputValue, isChecked, attempts, userAnswers, isCorrect, streak]);
 
-  const updateGameStateAndNextQuestion = (updatedAnswers: number[]) => {
-    // Reset các state câu hỏi hiện tại ngay lập tức để người chơi gõ tiếp câu mới không bị trễ
+  const updateGameStateAndNextQuestion = (updatedAnswers: (number | string)[]) => {
     setInputValue('');
     setIsChecked(false);
     setIsCorrect(false);
@@ -167,12 +252,53 @@ export default function QuizActive({
   const handleCheck = () => {
     if (inputValue === '' || isChecked) return;
 
-    const answerNum = parseInt(inputValue, 10);
-    const updatedAnswers = [...userAnswers, answerNum];
-    setUserAnswers(updatedAnswers);
-    
+    let isAnsCorrect = false;
+    let updatedAnswers: (number | string)[] = [];
+
     const correctVal = currentQuestion.correctAnswer;
-    const isAnsCorrect = answerNum === correctVal;
+
+    if (currentQuestion.operator === 'So sánh') {
+      isAnsCorrect = inputValue.trim() === String(correctVal).trim();
+      updatedAnswers = [...userAnswers, inputValue];
+    } else if (currentQuestion.operator === 'Đồng hồ') {
+      const cleanInput = inputValue.trim().toLowerCase();
+      const correctHour = Number(correctVal);
+      isAnsCorrect = 
+        cleanInput === String(correctHour) ||
+        cleanInput === `${correctHour} giờ` ||
+        cleanInput === `${correctHour}gio` ||
+        cleanInput === `${correctHour}h` ||
+        cleanInput === `${correctHour}:00` ||
+        cleanInput === `0${correctHour}:00`;
+      updatedAnswers = [...userAnswers, inputValue];
+    } else if (currentQuestion.operator === 'Ngày tháng') {
+      const cleanInput = inputValue.trim().toLowerCase();
+      // Câu hỏi về Tháng 2 chấp nhận: 28, 29, 28 hoặc 29, 28/29
+      if (currentQuestion.text.includes('Tháng 2') || currentQuestion.text.includes('tháng 2')) {
+        const accepted = [
+          '28', '29', '28 hoặc 29', '28/29', '28 hoac 29',
+          '28 ngày', '29 ngày', '28 hoặc 29 ngày', '28/29 ngày', '28 hoac 29 ngay',
+          '28ngay', '29ngay', '28hoac29ngay', '28/29ngay'
+        ];
+        isAnsCorrect = accepted.some(ans => cleanInput.replace(/\s+/g, '') === ans.replace(/\s+/g, ''));
+      } else {
+        const normInput = normalizeDayOfWeek(cleanInput);
+        const normCorrect = normalizeDayOfWeek(String(correctVal));
+        isAnsCorrect = 
+          normInput === normCorrect ||
+          cleanInput === String(correctVal).toLowerCase() ||
+          cleanInput === `${String(correctVal).toLowerCase()} ngày` ||
+          cleanInput === `${String(correctVal).toLowerCase()} tháng` ||
+          cleanInput.replace(/\s+/g, '') === String(correctVal).toLowerCase().replace(/\s+/g, '');
+      }
+      updatedAnswers = [...userAnswers, inputValue];
+    } else {
+      const answerNum = parseInt(inputValue, 10);
+      isAnsCorrect = answerNum === Number(correctVal);
+      updatedAnswers = [...userAnswers, answerNum];
+    }
+
+    setUserAnswers(updatedAnswers);
     
     const newAttempts = attempts + 1;
     setAttempts(newAttempts);
@@ -216,11 +342,51 @@ export default function QuizActive({
         setIsCorrect(false);
         setIsChecked(true);
         setMascotState('wrong');
-        const originalResult = currentQuestion.operatorSymbol === '+' ? currentQuestion.num1 + currentQuestion.num2
-          : currentQuestion.operatorSymbol === '-' ? currentQuestion.num1 - currentQuestion.num2
-          : currentQuestion.operatorSymbol === '×' ? currentQuestion.num1 * currentQuestion.num2
-          : currentQuestion.num1 / currentQuestion.num2;
-        setFeedback(`Không sao đâu con! Phép tính đúng là: ${currentQuestion.num1} ${currentQuestion.operatorSymbol} ${currentQuestion.num2} = ${originalResult}`);
+        
+        let correctDisplay = String(correctVal);
+        if (currentQuestion.operator === 'Đồng hồ') {
+          correctDisplay = `${correctVal} giờ`;
+        } else if (currentQuestion.operator === 'Đổi đơn vị') {
+          correctDisplay = `${currentQuestion.num1} ${currentQuestion.fromUnit} = [ ${correctVal} ] ${currentQuestion.toUnit}`;
+        } else if (currentQuestion.operator === 'So sánh') {
+          correctDisplay = `${currentQuestion.compLeft} [ ${correctVal} ] ${currentQuestion.compRight}`;
+        } else if (currentQuestion.operator === 'Dãy số') {
+          correctDisplay = `Số thích hợp là [ ${correctVal} ]`;
+        } else if (currentQuestion.operator === 'Ngày tháng') {
+          if (currentQuestion.text.includes('Tháng 2') || currentQuestion.text.includes('tháng 2')) {
+            correctDisplay = '28 hoặc 29 ngày';
+          } else if (typeof correctVal === 'number') {
+            correctDisplay = `Số thích hợp là [ ${correctVal} ]`;
+          } else {
+            correctDisplay = `Đáp án là [ ${correctVal} ]`;
+          }
+        } else if (['Cộng', 'Trừ', 'Nhân', 'Chia'].includes(currentQuestion.operator)) {
+          let opSym = '+';
+          if (currentQuestion.operator === 'Trừ') opSym = '-';
+          else if (currentQuestion.operator === 'Nhân') opSym = '×';
+          else if (currentQuestion.operator === 'Chia') opSym = '÷';
+
+          const val1 = currentQuestion.num1;
+          const val2 = currentQuestion.num2;
+          let resultVal = val1 + val2;
+          if (currentQuestion.operator === 'Trừ') resultVal = val1 - val2;
+          else if (currentQuestion.operator === 'Nhân') resultVal = val1 * val2;
+          else if (currentQuestion.operator === 'Chia') resultVal = val1 / val2;
+
+          if (currentQuestion.isMissingNumber) {
+            if (currentQuestion.missingPosition === 'left') {
+              correctDisplay = `[ ${val1} ] ${opSym} ${val2} = ${resultVal}`;
+            } else if (currentQuestion.missingPosition === 'right') {
+              correctDisplay = `${val1} ${opSym} [ ${val2} ] = ${resultVal}`;
+            } else {
+              correctDisplay = `${val1} ${opSym} ${val2} = [ ${resultVal} ]`;
+            }
+          } else {
+            correctDisplay = `${val1} ${opSym} ${val2} = [ ${correctVal} ]`;
+          }
+        }
+        
+        setFeedback(`Không sao đâu con! Đáp án đúng là: ${correctDisplay}`);
       } else {
         // Còn lượt thử lại (lượt 1)
         setMascotState('wrong');
@@ -255,8 +421,6 @@ export default function QuizActive({
     onAnswerSubmit(historyItem, isCorrect);
   };
 
-  // Phần trăm tiến hành làm bài để vẽ thanh tiến trình
-  const progressPercent = ((currentIndex) / config.totalQuestions) * 100;
   // Phần trăm hiện tại bao gồm cả câu hiện tại đang làm
   const answeredPercent = ((currentIndex + 1) / config.totalQuestions) * 100;
 
@@ -310,7 +474,7 @@ export default function QuizActive({
         {/* Thanh tiến trình phía trên cực bắt mắt */}
         <div className="bg-white rounded-2xl p-4 border-2 border-slate-100 shadow-sm">
           <div className="flex justify-between items-center text-sm font-bold text-slate-600 mb-2">
-            <span>Bài ôn tập: {config.operator === 'cong' ? 'Phép Cộng ➕' : config.operator === 'tru' ? 'Phép Trừ ➖' : config.operator === 'nhan' ? 'Phép Nhân ✖️' : config.operator === 'chia' ? 'Phép Chia ➗' : 'Hỗn Hợp 🌠'}</span>
+            <span>Dạng bài: {currentQuestion.operator}</span>
             <span className="text-blue-600">Câu {currentIndex + 1} của {config.totalQuestions}</span>
           </div>
           {/* Thanh progress bar bo góc đẹp */}
@@ -343,16 +507,15 @@ export default function QuizActive({
             {/* Nhãn loại phép tính đầy hào hứng */}
             <div className="bg-indigo-50 border-2 border-indigo-200 text-indigo-700 text-xs md:text-sm font-black px-4 py-1.5 rounded-full mb-6 flex items-center gap-1.5 shadow-sm">
               <Award className="w-4 h-4 text-indigo-500" />
-              LỚP 3 • PHÉP {currentQuestion.operator.toUpperCase()}
+              LỚP 3 • {currentQuestion.operator.toUpperCase()}
             </div>
 
-            {/* Phép tính toán */}
+            {/* Phép tính toán / Dạng bài tập */}
             {(() => {
-              const originalResult = currentQuestion.operatorSymbol === '+' ? currentQuestion.num1 + currentQuestion.num2
-                : currentQuestion.operatorSymbol === '-' ? currentQuestion.num1 - currentQuestion.num2
-                : currentQuestion.operatorSymbol === '×' ? currentQuestion.num1 * currentQuestion.num2
-                : currentQuestion.num1 / currentQuestion.num2;
-
+              // Cấu hình linh hoạt loại input
+              const isDateTextAns = currentQuestion.operator === 'Ngày tháng' && typeof currentQuestion.correctAnswer === 'string' && currentQuestion.correctAnswer.includes('thứ');
+              
+              // Định nghĩa ô nhập liệu chuẩn
               const inputElement = (
                 <div className="relative inline-block mx-1">
                   <input
@@ -365,29 +528,154 @@ export default function QuizActive({
                     }}
                     key={`math-answer-input-key-${currentQuestion.id}`}
                     type="text"
-                    pattern="[0-9]*"
+                    pattern={isDateTextAns || currentQuestion.operator === 'So sánh' ? undefined : "[0-9]*"}
                     id={`math-answer-input-${currentQuestion.id}`}
-                    inputMode="numeric"
+                    inputMode={isDateTextAns || currentQuestion.operator === 'So sánh' ? undefined : "numeric"}
                     value={inputValue}
                     disabled={isChecked}
                     autoFocus
                     onChange={(e) => {
-                      const cleanVal = e.target.value.replace(/[^0-9]/g, '');
-                      if (cleanVal.length <= 4) {
-                        setInputValue(cleanVal);
+                      if (currentQuestion.operator === 'So sánh') {
+                        const val = e.target.value;
+                        if (['>', '<', '='].includes(val) || val === '') {
+                          setInputValue(val);
+                        }
+                      } else if (currentQuestion.operator === 'Ngày tháng') {
+                        // Cho phép nhập chữ bất kỳ tối đa 20 ký tự (vd: "thứ Năm", "28 ngày")
+                        if (e.target.value.length <= 20) {
+                          setInputValue(e.target.value);
+                        }
+                      } else {
+                        const cleanVal = e.target.value.replace(/[^0-9]/g, '');
+                        if (cleanVal.length <= 4) {
+                          setInputValue(cleanVal);
+                        }
                       }
                     }}
                     placeholder="?"
-                    className={`w-20 sm:w-28 md:w-36 lg:w-44 text-center font-sans font-black text-3xl sm:text-4xl md:text-5xl lg:text-6xl bg-slate-100 border-3 md:border-4 border-slate-300 rounded-2xl md:rounded-3xl py-1 md:py-2 px-1 text-slate-800 placeholder-slate-300 focus:outline-none focus:border-blue-500 focus:bg-white transition-all ${
+                    className={`w-20 sm:w-28 md:w-36 lg:w-44 text-center font-sans font-black text-2xl sm:text-3xl md:text-4xl lg:text-5xl bg-slate-100 border-3 md:border-4 border-slate-300 rounded-2xl md:rounded-3xl py-1 md:py-2 px-1 text-slate-800 placeholder-slate-300 focus:outline-none focus:border-blue-500 focus:bg-white transition-all ${
                       isChecked
                         ? isCorrect
                           ? 'bg-emerald-50 text-emerald-600 border-emerald-400'
                           : 'bg-rose-50 text-rose-600 border-rose-400'
                         : ''
-                    }`}
+                    } ${isDateTextAns ? 'w-48 sm:w-56 md:w-64 text-xl sm:text-2xl py-2 px-2' : ''}`}
                   />
                 </div>
               );
+
+              // 1. Dạng Xem đồng hồ
+              if (currentQuestion.operator === 'Đồng hồ') {
+                return (
+                  <div className="flex flex-col items-center gap-4 py-2 w-full">
+                    <div className="w-48 h-48 md:w-56 md:h-56 shrink-0 bg-slate-50 rounded-full p-2 border-2 border-slate-200 shadow-inner">
+                      <SvgClock hour={currentQuestion.hour || 12} />
+                    </div>
+                    <p className="text-lg md:text-xl font-bold text-slate-600 font-sans text-center mt-2">
+                      Đồng hồ đang chỉ mấy giờ?
+                    </p>
+                    <div className="flex items-center justify-center gap-2">
+                      {inputElement}
+                      <span className="text-xl md:text-2xl font-black text-slate-600 font-sans">giờ</span>
+                    </div>
+                  </div>
+                );
+              }
+
+              // 2. Dạng Đổi đơn vị
+              if (currentQuestion.operator === 'Đổi đơn vị') {
+                return (
+                  <div className="w-full py-4 flex justify-center">
+                    <div className="text-2xl sm:text-4xl md:text-5xl font-sans font-black text-slate-800 tracking-normal text-center flex items-center justify-center gap-2 sm:gap-3 whitespace-nowrap flex-nowrap">
+                      <span>{currentQuestion.num1} {currentQuestion.fromUnit}</span>
+                      <span className="text-blue-500 font-bold">=</span>
+                      {inputElement}
+                      <span>{currentQuestion.toUnit}</span>
+                    </div>
+                  </div>
+                );
+              }
+
+              // 3. Dạng Toán lời văn
+              if (currentQuestion.operator === 'Lời văn') {
+                return (
+                  <div className="flex flex-col items-center gap-6 py-4 w-full max-w-xl">
+                    <div className="bg-slate-50 border-2 border-slate-100 rounded-3xl p-5 md:p-6 shadow-inner w-full text-center">
+                      <p className="text-lg md:text-xl font-bold text-slate-700 font-sans leading-relaxed">
+                        {currentQuestion.wordProblemText}
+                      </p>
+                    </div>
+                    <div className="flex items-center justify-center gap-3">
+                      <span className="text-lg md:text-xl font-black text-slate-500 font-sans">Đáp án:</span>
+                      {inputElement}
+                    </div>
+                  </div>
+                );
+              }
+
+              // 4. Dạng So sánh số
+              if (currentQuestion.operator === 'So sánh') {
+                return (
+                  <div className="w-full py-4 flex justify-center">
+                    <div className="text-3xl sm:text-5xl md:text-6xl font-sans font-black text-slate-800 tracking-normal text-center flex items-center justify-center gap-3 sm:gap-4 whitespace-nowrap flex-nowrap">
+                      <span>{currentQuestion.compLeft}</span>
+                      <div className="mx-1 relative inline-block">
+                        <div
+                          className={`w-20 sm:w-28 md:w-36 lg:w-44 h-16 sm:h-20 md:h-24 flex items-center justify-center text-center font-sans font-black text-3xl sm:text-4xl md:text-5xl lg:text-6xl bg-slate-100 border-3 md:border-4 border-dashed border-slate-300 rounded-2xl md:rounded-3xl text-indigo-600 transition-all ${
+                            isChecked
+                              ? isCorrect
+                                ? 'bg-emerald-50 text-emerald-600 border-emerald-400 border-solid'
+                                : 'bg-rose-50 text-rose-600 border-rose-400 border-solid'
+                              : 'bg-indigo-50/50 border-indigo-200'
+                          }`}
+                        >
+                          {inputValue || '?'}
+                        </div>
+                      </div>
+                      <span>{currentQuestion.compRight}</span>
+                    </div>
+                  </div>
+                );
+              }
+
+              // 5. Dạng Dãy số
+              if (currentQuestion.operator === 'Dãy số') {
+                return (
+                  <div className="w-full py-4 flex justify-center">
+                    <div className="text-3xl sm:text-4xl md:text-5xl font-sans font-black text-slate-800 tracking-normal text-center flex items-center justify-center gap-3 sm:gap-4 whitespace-nowrap flex-wrap">
+                      {currentQuestion.sequence?.map((num, idx) => {
+                        if (idx === currentQuestion.missingIndex) {
+                          return <div key={idx}>{inputElement}</div>;
+                        }
+                        return <span key={idx} className="text-slate-600">{num}</span>;
+                      })}
+                    </div>
+                  </div>
+                );
+              }
+
+              // 5.5. Dạng Ngày tháng
+              if (currentQuestion.operator === 'Ngày tháng') {
+                return (
+                  <div className="flex flex-col items-center gap-6 py-4 w-full max-w-xl">
+                    <div className="bg-slate-50 border-2 border-slate-100 rounded-3xl p-5 md:p-6 shadow-inner w-full text-center">
+                      <p className="text-xl md:text-2xl font-bold text-slate-700 font-sans leading-relaxed">
+                        {currentQuestion.text}
+                      </p>
+                    </div>
+                    <div className="flex items-center justify-center gap-3">
+                      <span className="text-lg md:text-xl font-black text-slate-500 font-sans">Đáp án:</span>
+                      {inputElement}
+                    </div>
+                  </div>
+                );
+              }
+
+              // 6. Nhóm phép tính cơ bản
+              const originalResult = currentQuestion.operatorSymbol === '+' ? currentQuestion.num1 + currentQuestion.num2
+                : currentQuestion.operatorSymbol === '-' ? currentQuestion.num1 - currentQuestion.num2
+                : currentQuestion.operatorSymbol === '×' ? currentQuestion.num1 * currentQuestion.num2
+                : currentQuestion.num1 / currentQuestion.num2;
 
               return (
                 <div className="w-full overflow-x-auto md:overflow-x-visible py-4 flex justify-center">
@@ -441,56 +729,77 @@ export default function QuizActive({
               )}
             </AnimatePresence>
 
-            {/* Khối Bàn Phím Số Ảo trực quan cho Con */}
-            <div className="w-full max-w-sm mt-4 grid grid-cols-3 gap-2.5" id="virtual-keypad">
-              {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((num) => (
+            {/* Khối Bàn Phím Dành Cho Dấu So Sánh / Hoặc Số */}
+            {currentQuestion.operator === 'So sánh' ? (
+              <div className="w-full max-w-sm mt-4 grid grid-cols-3 gap-3" id="virtual-keypad-comp">
+                {['>', '<', '='].map((sign) => (
+                  <button
+                    key={sign}
+                    type="button"
+                    id={`btn-keypad-sign-${sign}`}
+                    disabled={isChecked}
+                    onClick={() => handleKeypadPress(sign)}
+                    className="py-5 bg-indigo-50 hover:bg-indigo-100 active:scale-95 disabled:opacity-50 disabled:pointer-events-none rounded-2xl border-2 border-indigo-200 font-sans font-black text-3xl md:text-4xl text-indigo-700 shadow-md cursor-pointer transition-transform flex items-center justify-center"
+                  >
+                    {sign}
+                  </button>
+                ))}
+              </div>
+            ) : currentQuestion.operator === 'Ngày tháng' && typeof currentQuestion.correctAnswer === 'string' && currentQuestion.correctAnswer.includes('thứ') ? (
+              <div className="text-center text-slate-400 text-xs py-4 font-semibold font-sans">
+                * Mẹo: Bé hãy gõ tên thứ bằng bàn phím thiết bị nhé!
+              </div>
+            ) : (
+              <div className="w-full max-w-sm mt-4 grid grid-cols-3 gap-2.5" id="virtual-keypad">
+                {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((num) => (
+                  <button
+                    key={num}
+                    type="button"
+                    id={`btn-keypad-${num}`}
+                    disabled={isChecked}
+                    onClick={() => handleKeypadPress(num.toString())}
+                    className="py-3.5 bg-slate-50 hover:bg-slate-100 active:scale-95 disabled:opacity-50 disabled:pointer-events-none rounded-xl border border-slate-200 font-sans font-bold text-xl md:text-2xl text-slate-700 shadow-sm cursor-pointer transition-transform"
+                  >
+                    {num}
+                  </button>
+                ))}
+                
+                {/* Nút Xoá Tất cả */}
                 <button
-                  key={num}
                   type="button"
-                  id={`btn-keypad-${num}`}
+                  id="btn-keypad-clear"
                   disabled={isChecked}
-                  onClick={() => handleKeypadPress(num.toString())}
+                  onClick={() => handleKeypadPress('clear')}
+                  className="py-3.5 bg-amber-50 hover:bg-amber-100 active:scale-95 disabled:opacity-50 disabled:pointer-events-none rounded-xl border border-amber-200 text-amber-600 font-bold text-center inline-flex items-center justify-center gap-1 cursor-pointer transition-transform text-sm md:text-base font-sans"
+                >
+                  <RotateCcw className="w-4 h-4 md:w-5 md:h-5" />
+                  Xoá
+                </button>
+
+                {/* Số 0 */}
+                <button
+                  type="button"
+                  id="btn-keypad-0"
+                  disabled={isChecked}
+                  onClick={() => handleKeypadPress('0')}
                   className="py-3.5 bg-slate-50 hover:bg-slate-100 active:scale-95 disabled:opacity-50 disabled:pointer-events-none rounded-xl border border-slate-200 font-sans font-bold text-xl md:text-2xl text-slate-700 shadow-sm cursor-pointer transition-transform"
                 >
-                  {num}
+                  0
                 </button>
-              ))}
-              
-              {/* Nút Xoá Tất cả */}
-              <button
-                type="button"
-                id="btn-keypad-clear"
-                disabled={isChecked}
-                onClick={() => handleKeypadPress('clear')}
-                className="py-3.5 bg-amber-50 hover:bg-amber-100 active:scale-95 disabled:opacity-50 disabled:pointer-events-none rounded-xl border border-amber-200 text-amber-600 font-bold text-center inline-flex items-center justify-center gap-1 cursor-pointer transition-transform text-sm md:text-base font-sans"
-              >
-                <RotateCcw className="w-4 h-4 md:w-5 md:h-5" />
-                Xoá
-              </button>
 
-              {/* Số 0 */}
-              <button
-                type="button"
-                id="btn-keypad-0"
-                disabled={isChecked}
-                onClick={() => handleKeypadPress('0')}
-                className="py-3.5 bg-slate-50 hover:bg-slate-100 active:scale-95 disabled:opacity-50 disabled:pointer-events-none rounded-xl border border-slate-200 font-sans font-bold text-xl md:text-2xl text-slate-700 shadow-sm cursor-pointer transition-transform"
-              >
-                0
-              </button>
-
-              {/* Nút Xoá 1 số */}
-              <button
-                type="button"
-                id="btn-keypad-backspace"
-                disabled={isChecked}
-                onClick={() => handleKeypadPress('backspace')}
-                className="py-3.5 bg-rose-50 hover:bg-rose-100 active:scale-95 disabled:opacity-50 disabled:pointer-events-none rounded-xl border border-rose-200 text-rose-500 font-bold inline-flex items-center justify-center cursor-pointer transition-transform text-sm md:text-base font-sans"
-              >
-                <Delete className="w-4 h-4 md:w-5 md:h-5 mr-1" />
-                Xoá lùi
-              </button>
-            </div>
+                {/* Nút Xoá 1 số */}
+                <button
+                  type="button"
+                  id="btn-keypad-backspace"
+                  disabled={isChecked}
+                  onClick={() => handleKeypadPress('backspace')}
+                  className="py-3.5 bg-rose-50 hover:bg-rose-100 active:scale-95 disabled:opacity-50 disabled:pointer-events-none rounded-xl border border-rose-200 text-rose-500 font-bold inline-flex items-center justify-center cursor-pointer transition-transform text-sm md:text-base font-sans"
+                >
+                  <Delete className="w-4 h-4 md:w-5 md:h-5 mr-1" />
+                  Xoá lùi
+                </button>
+              </div>
+            )}
 
             {/* Các Nút Điều Khiển */}
             <div className="w-full max-w-sm mt-6 pt-2 border-t border-slate-100 flex gap-4">

@@ -1,5 +1,4 @@
 import { useState, useEffect } from 'react';
-import { motion } from 'motion/react';
 import { QuizConfig as QuizConfigType, Question } from '../types';
 import { RefreshCw, ArrowLeft, Printer, CheckSquare, Square, FileText, Download } from 'lucide-react';
 import { generateQuestions } from '../utils/mathGenerator';
@@ -57,6 +56,97 @@ const sanitizeText = (str: string, useUnicode: boolean): string => {
   return removeVietnameseTones(str);
 };
 
+// Helper component for clock preview in HTML
+function PreviewClock({ hour }: { hour: number }) {
+  const angle = hour * 30;
+  const ticks = Array.from({ length: 12 }, (_, i) => i + 1);
+
+  return (
+    <svg width="54" height="54" viewBox="0 0 100 100" className="select-none inline-block border-2 border-slate-700 rounded-full bg-white print:border-black">
+      <circle cx="50" cy="50" r="45" stroke="#475569" strokeWidth="3" fill="#ffffff" />
+      <circle cx="50" cy="50" r="4" fill="#1e293b" />
+      
+      {ticks.map(t => {
+        const rad = (t * 30 * Math.PI) / 180;
+        const xTickStart = 50 + 36 * Math.sin(rad);
+        const yTickStart = 50 - 36 * Math.cos(rad);
+        const xTickEnd = 50 + 42 * Math.sin(rad);
+        const yTickEnd = 50 - 42 * Math.cos(rad);
+        
+        return (
+          <line key={t} x1={xTickStart} y1={yTickStart} x2={xTickEnd} y2={yTickEnd} stroke="#64748b" strokeWidth="2.5" />
+        );
+      })}
+      
+      {/* Numbers 12, 3, 6, 9 */}
+      <text x="50" y="24" fontSize="12" fontWeight="900" textAnchor="middle" fill="#334155">12</text>
+      <text x="50" y="86" fontSize="12" fontWeight="900" textAnchor="middle" fill="#334155">6</text>
+      <text x="80" y="54" fontSize="12" fontWeight="900" textAnchor="middle" fill="#334155">3</text>
+      <text x="20" y="54" fontSize="12" fontWeight="900" textAnchor="middle" fill="#334155">9</text>
+      
+      {/* Kim Giờ */}
+      <line
+        x1="50"
+        y1="50"
+        x2={50 + 20 * Math.sin((angle * Math.PI) / 180)}
+        y2={50 - 20 * Math.cos((angle * Math.PI) / 180)}
+        stroke="#1e293b"
+        strokeWidth="6"
+        strokeLinecap="round"
+      />
+      
+      {/* Kim Phút */}
+      <line
+        x1="50"
+        y1="50"
+        x2="50"
+        y2="15"
+        stroke="#ef4444"
+        strokeWidth="3.5"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+// Vector clock drawing helper for jsPDF
+const drawPdfClock = (doc: any, cx: number, cy: number, r: number, hour: number) => {
+  // Outer circle
+  doc.setLineWidth(0.3);
+  doc.setDrawColor(70, 80, 95);
+  doc.circle(cx, cy, r);
+  
+  // Center dot
+  doc.setFillColor(30, 41, 59);
+  doc.circle(cx, cy, 0.5, 'F');
+  
+  // Numbers 12, 3, 6, 9
+  doc.setFontSize(6.5);
+  doc.text('12', cx, cy - r + 2.0, { align: 'center' });
+  doc.text('6', cx, cy + r - 0.5, { align: 'center' });
+  doc.text('3', cx + r - 1.8, cy + 0.8, { align: 'center' });
+  doc.text('9', cx - r + 1.2, cy + 0.8, { align: 'center' });
+  
+  // Hour hand
+  const angle = hour * 30;
+  const radH = (angle * Math.PI) / 180;
+  const hLength = r * 0.5;
+  const hx = cx + hLength * Math.sin(radH);
+  const hy = cy - hLength * Math.cos(radH);
+  doc.setLineWidth(0.7);
+  doc.setDrawColor(30, 41, 59);
+  doc.line(cx, cy, hx, hy);
+  
+  // Minute hand
+  const mLength = r * 0.75;
+  const mx = cx;
+  const my = cy - mLength;
+  doc.setLineWidth(0.35);
+  doc.setDrawColor(220, 38, 38);
+  doc.line(cx, cy, mx, my);
+  doc.setDrawColor(0, 0, 0); // Reset
+};
+
 export default function A4Worksheet({ config, questions: initialQuestions, onBack, onRefresh }: A4WorksheetProps) {
   const [questions, setQuestions] = useState<Question[]>(initialQuestions);
   const [showAnswers, setShowAnswers] = useState<boolean>(false);
@@ -65,12 +155,48 @@ export default function A4Worksheet({ config, questions: initialQuestions, onBac
   const [isGeneratingPdf, setIsGeneratingPdf] = useState<boolean>(false);
   const [isGeneratingAnsPdf, setIsGeneratingAnsPdf] = useState<boolean>(false);
 
+  // Mảng lưu trữ các dạng bài được chọn để in/PDF
+  const [selectedPdfDangs, setSelectedPdfDangs] = useState<('phep_tinh' | 'dong_ho' | 'doi_don_vi' | 'toan_loi_van' | 'so_sanh_so' | 'day_so' | 'ngay_thang')[]>(() => {
+    if (config.selectedPdfDangs && config.selectedPdfDangs.length > 0) {
+      return config.selectedPdfDangs;
+    }
+    if (config.operator === 'hon_hop') {
+      return ['phep_tinh', 'dong_ho', 'doi_don_vi', 'toan_loi_van', 'so_sanh_so', 'day_so', 'ngay_thang'];
+    }
+    if (config.operator === 'hon_hop_toan_bo') {
+      return ['phep_tinh', 'dong_ho', 'doi_don_vi', 'toan_loi_van', 'so_sanh_so', 'day_so', 'ngay_thang'];
+    }
+    const mapOperatorToDang: Record<string, 'phep_tinh' | 'dong_ho' | 'doi_don_vi' | 'toan_loi_van' | 'so_sanh_so' | 'day_so' | 'ngay_thang'> = {
+      xem_dong_ho: 'dong_ho',
+      doi_don_vi: 'doi_don_vi',
+      toan_loi_van: 'toan_loi_van',
+      so_sanh_so: 'so_sanh_so',
+      day_so: 'day_so',
+      ngay_thang: 'ngay_thang',
+    };
+    return [mapOperatorToDang[config.operator] || 'phep_tinh'];
+  });
+
   useEffect(() => {
     setQuestions(initialQuestions);
   }, [initialQuestions]);
 
   const handleRegenerate = () => {
-    const generated = generateQuestions(config.totalQuestions, config.operator, config.selectedTables, config);
+    const updatedConfig = { ...config, selectedPdfDangs };
+    const generated = generateQuestions(config.totalQuestions, config.operator, config.selectedTables, updatedConfig);
+    setQuestions(generated);
+  };
+
+  const handleToggleDang = (dang: 'phep_tinh' | 'dong_ho' | 'doi_don_vi' | 'toan_loi_van' | 'so_sanh_so' | 'day_so' | 'ngay_thang') => {
+    const nextDangs = selectedPdfDangs.includes(dang)
+      ? selectedPdfDangs.filter(x => x !== dang)
+      : [...selectedPdfDangs, dang];
+    
+    const finalDangs = nextDangs.length === 0 ? [dang] : nextDangs;
+    setSelectedPdfDangs(finalDangs);
+    
+    const updatedConfig = { ...config, selectedPdfDangs: finalDangs };
+    const generated = generateQuestions(config.totalQuestions, config.operator, config.selectedTables, updatedConfig);
     setQuestions(generated);
   };
 
@@ -78,20 +204,34 @@ export default function A4Worksheet({ config, questions: initialQuestions, onBac
     window.print();
   };
 
-  // Get Vietnamese title based on operator
+  // Get Vietnamese title based on operator and selections
   const getWorksheetTitle = () => {
-    switch (config.operator) {
-      case 'cong':
-        return 'PHIẾU BÀI TẬP: PHÉP CỘNG TOÁN LỚP 3';
-      case 'tru':
-        return 'PHIẾU BÀI TẬP: PHÉP TRỪ TOÁN LỚP 3';
-      case 'nhan':
-        return 'PHIẾU BÀI TẬP: PHÉP NHÂN LỚP 3';
-      case 'chia':
-        return 'PHIẾU BÀI TẬP: PHÉP CHIA LỚP 3';
-      case 'hon_hop':
+    if (selectedPdfDangs.length > 1) {
+      return 'PHIẾU BÀI TẬP ÔN TẬP TOÁN HỖN HỢP LỚP 3';
+    }
+    const singleDang = selectedPdfDangs[0];
+    switch (singleDang) {
+      case 'dong_ho':
+        return 'PHIẾU BÀI TẬP: XEM ĐỒNG HỒ LỚP 3';
+      case 'doi_don_vi':
+        return 'PHIẾU BÀI TẬP: ĐỔI ĐƠN VỊ LỚP 3';
+      case 'toan_loi_van':
+        return 'PHIẾU BÀI TẬP: TOÁN LỜI VĂN LỚP 3';
+      case 'so_sanh_so':
+        return 'PHIẾU BÀI TẬP: SO SÁNH SỐ LỚP 3';
+      case 'day_so':
+        return 'PHIẾU BÀI TẬP: DÃY SỐ TOÁN LỚP 3';
+      case 'ngay_thang':
+        return 'PHIẾU BÀI TẬP: NGÀY THÁNG TOÁN LỚP 3';
+      case 'phep_tinh':
       default:
-        return 'PHIẾU BÀI TẬP ÔN TẬP TOÁN HỖN HỢP LỚP 3';
+        switch (config.operator) {
+          case 'cong': return 'PHIẾU BÀI TẬP: PHÉP CỘNG TOÁN LỚP 3';
+          case 'tru': return 'PHIẾU BÀI TẬP: PHÉP TRỪ TOÁN LỚP 3';
+          case 'nhan': return 'PHIẾU BÀI TẬP: PHÉP NHÂN LỚP 3';
+          case 'chia': return 'PHIẾU BÀI TẬP: PHÉP CHIA LỚP 3';
+          default: return 'PHIẾU BÀI TẬP: CÁC PHÉP TÍNH LỚP 3';
+        }
     }
   };
 
@@ -106,7 +246,6 @@ export default function A4Worksheet({ config, questions: initialQuestions, onBac
     setGenerating(true);
 
     try {
-      // Dynamic import to optimize bundle size and speed up initial page render
       const { jsPDF } = await import('jspdf');
       
       const doc = new jsPDF({
@@ -147,78 +286,253 @@ export default function A4Worksheet({ config, questions: initialQuestions, onBac
 
       const sanitize = (text: string) => sanitizeText(text, useUnicode);
 
-      // --- PAGE 1 DESIGN ---
-      // 1. HEADER (Only keep: Họ và tên & Điểm số, no title or decorations)
-      doc.setFont(boldFont, 'bold');
-      doc.setFontSize(11);
-      const nameVal = studentName ? studentName : '___________________________';
-      const ansSuffix = isAnswerSheet ? '  (ĐÁP ÁN)' : '';
-      const headerLine = `Họ và tên: ${nameVal}    Điểm số: ______ / ${config.totalQuestions}${ansSuffix}`;
-      doc.text(sanitize(headerLine), 15, 18);
+      // Helper function to draw header on a page
+      const drawHeader = (pageNumber: number) => {
+        doc.setFont(boldFont, 'bold');
+        doc.setFontSize(11);
+        const nameVal = studentName ? studentName : '___________________________';
+        const classVal = studentClass ? `    Lớp: ${studentClass}` : '';
+        const ansSuffix = isAnswerSheet ? '  (ĐÁP ÁN)' : '';
+        const titleText = getWorksheetTitle();
+        
+        // Print Worksheet Title
+        doc.text(sanitize(titleText + ansSuffix), 15, 12);
+        
+        // Print Name, Class & Score line
+        doc.setFontSize(10.5);
+        const headerLine = `Học và tên: ${nameVal}${classVal}    Điểm số: ______ / ${config.totalQuestions}`;
+        doc.text(sanitize(headerLine), 15, 18);
 
-      // Thin separation line
-      doc.setLineWidth(0.3);
-      doc.setDrawColor(150, 150, 150);
-      doc.line(15, 21, 195, 21);
+        // Thin separation line
+        doc.setLineWidth(0.3);
+        doc.setDrawColor(150, 150, 150);
+        doc.line(15, 20, 195, 20);
+      };
 
-      // 2. MATH QUESTIONS IN A 2-COLUMN GRID
-      let currentY = 30;
-      let isColumn2 = false;
-      const rowHeight = 11; // Compact height to prevent unnecessary multi-page wrap
-      const pageHeightLimit = 282; // Maximize standard printable height on A4 (297mm)
+      // Draw initial page header
+      drawHeader(1);
+
+      // MATH QUESTIONS IN A 2-COLUMN GRID (with dynamic height & full-width support)
+      let leftY = 26;
+      let rightY = 26;
+      const pageHeightLimit = 276; // Safe printing bottom limit on A4
 
       for (let i = 0; i < questions.length; i++) {
         const q = questions[i];
-        const x = isColumn2 ? 110 : 15;
-
-        const qNumText = sanitize(`Câu ${i + 1}:`);
-        const originalResult = q.operatorSymbol === '+' ? q.num1 + q.num2
-          : q.operatorSymbol === '-' ? q.num1 - q.num2
-          : q.operatorSymbol === '×' ? q.num1 * q.num2
-          : q.num1 / q.num2;
-
-        let questionFormula = '';
-        if (q.isMissingNumber && q.missingPosition === 'left') {
-          questionFormula = isAnswerSheet
-            ? `[ ${q.correctAnswer} ] ${q.operatorSymbol} ${q.num2} = ${originalResult}`
-            : `[      ] ${q.operatorSymbol} ${q.num2} = ${originalResult}`;
-        } else if (q.isMissingNumber && q.missingPosition === 'right') {
-          questionFormula = isAnswerSheet
-            ? `${q.num1} ${q.operatorSymbol} [ ${q.correctAnswer} ] = ${originalResult}`
-            : `${q.num1} ${q.operatorSymbol} [      ] = ${originalResult}`;
+        
+        // Calculate height and check if it's full-width
+        let isFullWidth = false;
+        let questionHeight = 12; // Default Y spacing for standard lines
+        
+        if (q.operator === 'Lời văn') {
+          isFullWidth = true;
+          const textWidth = 160;
+          const lines = doc.splitTextToSize(sanitize(q.wordProblemText || ''), textWidth);
+          questionHeight = lines.length * 5.5 + 11; // text lines + spacing + answer line
+        } else if (q.operator === 'Đồng hồ') {
+          questionHeight = 22; // Clock drawing + spacing takes 22mm
+        } else if (q.operator === 'Ngày tháng') {
+          const isFeb = q.text.includes('Tháng 2') || q.text.includes('tháng 2');
+          const ansString = isAnswerSheet ? (isFeb ? ' [ 28 hoặc 29 ngày ]' : ` [ ${q.correctAnswer} ]`) : ' [        ]';
+          const qText = q.text + ansString;
+          const lines = doc.splitTextToSize(sanitize(qText), 75);
+          questionHeight = lines.length * 5 + 6;
         } else {
-          questionFormula = isAnswerSheet
-            ? `${q.num1} ${q.operatorSymbol} ${q.num2} = [ ${q.correctAnswer} ]`
-            : `${q.num1} ${q.operatorSymbol} ${q.num2} = [      ]`;
+          questionHeight = 12;
         }
 
-        // Write prefix "Câu X:"
-        doc.setFont(boldFont, 'bold');
-        doc.setFontSize(11);
-        doc.text(qNumText, x, currentY);
-
-        // Write equation body next to prefix
-        doc.setFont(regularFont, 'normal');
-        doc.setFontSize(11.5);
-        doc.text(sanitize(questionFormula), x + 16, currentY);
-
-        // Grid navigation
-        if (isColumn2) {
-          currentY += rowHeight;
-          isColumn2 = false;
-
-          // Page wrap check
-          if (currentY > pageHeightLimit && i < questions.length - 1) {
+        // Layout placement
+        if (isFullWidth) {
+          let currentMaxY = Math.max(leftY, rightY);
+          
+          // Page overflow check
+          if (currentMaxY + questionHeight > pageHeightLimit) {
             doc.addPage();
-            currentY = 20;
-            isColumn2 = false;
+            drawHeader(doc.getNumberOfPages());
+            leftY = 26;
+            rightY = 26;
+            currentMaxY = 26;
           }
+          
+          // Render Word Problem
+          // "Câu X:" prefix
+          doc.setFont(boldFont, 'bold');
+          doc.setFontSize(10);
+          doc.text(sanitize(`Câu ${i + 1}:`), 15, currentMaxY + 4);
+          
+          // Paragraph body (wrapped)
+          const textWidth = 160;
+          const lines = doc.splitTextToSize(sanitize(q.wordProblemText || ''), textWidth);
+          doc.setFont(regularFont, 'normal');
+          doc.setFontSize(10.5);
+          lines.forEach((line: string, idx: number) => {
+            doc.text(line, 28, currentMaxY + 4 + idx * 5.5);
+          });
+          
+          // Answer space
+          const answerY = currentMaxY + 4 + lines.length * 5.5 + 2;
+          doc.setFont(boldFont, 'bold');
+          const ansText = isAnswerSheet ? `Đáp án: [  ${q.correctAnswer}  ]` : 'Đáp án: [          ]';
+          doc.text(sanitize(ansText), 28, answerY);
+          
+          // Align columns
+          const endY = currentMaxY + questionHeight;
+          leftY = endY;
+          rightY = endY;
+          
         } else {
-          isColumn2 = true;
+          // Column question
+          // Use shorter column
+          let useCol2 = leftY > rightY;
+          let colX = useCol2 ? 110 : 15;
+          let colY = useCol2 ? rightY : leftY;
+          
+          // Page overflow check
+          if (colY + questionHeight > pageHeightLimit) {
+            doc.addPage();
+            drawHeader(doc.getNumberOfPages());
+            leftY = 26;
+            rightY = 26;
+            useCol2 = false;
+            colX = 15;
+            colY = 26;
+          }
+          
+          // Render based on type
+          if (q.operator === 'Đồng hồ') {
+            doc.setFont(boldFont, 'bold');
+            doc.setFontSize(10);
+            doc.text(sanitize(`Câu ${i + 1}:`), colX, colY + 5);
+            
+            const centerX = colX + 22;
+            const centerY = colY + 10;
+            const radius = 8;
+            
+            // Draw SVG clock into PDF using vector shapes
+            drawPdfClock(doc, centerX, centerY, radius, q.hour || 12);
+            
+            // Label and placeholder
+            doc.setFont(regularFont, 'normal');
+            doc.setFontSize(10);
+            doc.text(sanitize('Đồng hồ chỉ:'), colX + 35, colY + 7);
+            
+            doc.setFont(boldFont, 'bold');
+            const ansText = isAnswerSheet ? `[  ${q.correctAnswer}  ] giờ` : '[        ] giờ';
+            doc.text(sanitize(ansText), colX + 35, colY + 13);
+            
+          } else if (q.operator === 'So sánh') {
+            doc.setFont(boldFont, 'bold');
+            doc.setFontSize(10);
+            doc.text(sanitize(`Câu ${i + 1}:`), colX, colY + 5);
+            
+            doc.setFont(regularFont, 'normal');
+            doc.setFontSize(11);
+            
+            const boxStr = isAnswerSheet ? `[  ${q.correctAnswer}  ]` : '[       ]';
+            const formulaStr = `${q.compLeft}   ${boxStr}   ${q.compRight}`;
+            doc.text(sanitize(formulaStr), colX + 16, colY + 5);
+            
+          } else if (q.operator === 'Dãy số') {
+            doc.setFont(boldFont, 'bold');
+            doc.setFontSize(10);
+            doc.text(sanitize(`Câu ${i + 1}:`), colX, colY + 5);
+            
+            doc.setFont(regularFont, 'normal');
+            doc.setFontSize(11);
+            
+            const seqStr = q.sequence?.map((num, idx) => 
+              idx === q.missingIndex 
+                ? (isAnswerSheet ? `[ ${q.correctAnswer} ]` : '[      ]') 
+                : String(num)
+            ).join('  ') || '';
+            
+            doc.text(sanitize(seqStr), colX + 16, colY + 5);
+            
+          } else if (q.operator === 'Đổi đơn vị') {
+            doc.setFont(boldFont, 'bold');
+            doc.setFontSize(10);
+            doc.text(sanitize(`Câu ${i + 1}:`), colX, colY + 5);
+            
+            doc.setFont(regularFont, 'normal');
+            doc.setFontSize(11);
+            
+            const boxStr = isAnswerSheet ? `[  ${q.correctAnswer}  ]` : '[        ]';
+            const formulaStr = `${q.num1} ${q.fromUnit} = ${boxStr} ${q.toUnit}`;
+            doc.text(sanitize(formulaStr), colX + 16, colY + 5);
+            
+          } else if (q.operator === 'Ngày tháng') {
+            doc.setFont(boldFont, 'bold');
+            doc.setFontSize(10);
+            doc.text(sanitize(`Câu ${i + 1}:`), colX, colY + 5);
+            
+            doc.setFont(regularFont, 'normal');
+            doc.setFontSize(10);
+            
+            const isFeb = q.text.includes('Tháng 2') || q.text.includes('tháng 2');
+            const ansString = isAnswerSheet 
+              ? (isFeb ? ' [ 28 hoặc 29 ngày ]' : ` [ ${q.correctAnswer} ]`) 
+              : ' [        ]';
+            
+            const qText = q.text + ansString;
+            const lines = doc.splitTextToSize(sanitize(qText), 75);
+            lines.forEach((line: string, idx: number) => {
+              doc.text(line, colX + 16, colY + 5 + idx * 5);
+            });
+            
+          } else {
+            // Basic math operations
+            doc.setFont(boldFont, 'bold');
+            doc.setFontSize(10);
+            doc.text(sanitize(`Câu ${i + 1}:`), colX, colY + 5);
+            
+            doc.setFont(regularFont, 'normal');
+            doc.setFontSize(11.5);
+            
+            const originalResult = q.operatorSymbol === '+' ? q.num1 + q.num2
+              : q.operatorSymbol === '-' ? q.num1 - q.num2
+              : q.operatorSymbol === '×' ? q.num1 * q.num2
+              : q.num1 / q.num2;
+
+            let questionFormula = '';
+            if (q.isMissingNumber && q.missingPosition === 'left') {
+              questionFormula = isAnswerSheet
+                ? `[ ${q.correctAnswer} ] ${q.operatorSymbol} ${q.num2} = ${originalResult}`
+                : `[      ] ${q.operatorSymbol} ${q.num2} = ${originalResult}`;
+            } else if (q.isMissingNumber && q.missingPosition === 'right') {
+              questionFormula = isAnswerSheet
+                ? `${q.num1} ${q.operatorSymbol} [ ${q.correctAnswer} ] = ${originalResult}`
+                : `${q.num1} ${q.operatorSymbol} [      ] = ${originalResult}`;
+            } else {
+              questionFormula = isAnswerSheet
+                ? `${q.num1} ${q.operatorSymbol} ${q.num2} = [ ${q.correctAnswer} ]`
+                : `${q.num1} ${q.operatorSymbol} ${q.num2} = [      ]`;
+            }
+            
+            doc.text(sanitize(questionFormula), colX + 16, colY + 5);
+          }
+          
+          // Update height of the column used
+          if (useCol2) {
+            rightY = colY + questionHeight;
+          } else {
+            leftY = colY + questionHeight;
+          }
         }
       }
 
-      // SAVE FILE
+      // Add elegant page number footer on each page (using post-processing)
+      const totalPages = doc.getNumberOfPages();
+      for (let p = 1; p <= totalPages; p++) {
+        doc.setPage(p);
+        doc.setFont(regularFont, 'normal');
+        doc.setFontSize(8.5);
+        doc.setTextColor(140, 140, 140);
+        
+        const footerText = sanitize(`Trang ${p} / ${totalPages}  •  Bé Học Toán Lớp 3`);
+        doc.text(footerText, 105, 287, { align: 'center' });
+      }
+
+      // Save PDF document
       const filename = isAnswerSheet
         ? 'dap-an-phieu-bai-tap-toan-lop-3.pdf'
         : 'phieu-bai-tap-toan-lop-3.pdf';
@@ -244,9 +558,10 @@ export default function A4Worksheet({ config, questions: initialQuestions, onBac
               Chế độ Phiếu Bài Tập A4
             </h2>
             <p className="text-slate-500 text-xs md:text-sm">
-              Đề bài đã tự động tạo {config.totalQuestions} câu hỏi <span className="font-bold text-indigo-600">không trùng lặp</span>, sẵn sàng để in hoặc xuất file PDF.
+              Đề bài tự động tạo <span className="font-bold text-indigo-600">{config.totalQuestions} câu hỏi</span> ngẫu nhiên không trùng lặp, sẵn sàng để in hoặc xuất file PDF.
             </p>
           </div>
+          
           <div className="flex flex-wrap gap-2 w-full md:w-auto">
             <button
               onClick={onBack}
@@ -263,7 +578,6 @@ export default function A4Worksheet({ config, questions: initialQuestions, onBac
               <RefreshCw className="w-4 h-4" /> Đổi đề mới
             </button>
             
-            {/* Real PDF export button */}
             <button
               onClick={() => generatePdf(false)}
               disabled={isGeneratingPdf || isGeneratingAnsPdf}
@@ -282,7 +596,6 @@ export default function A4Worksheet({ config, questions: initialQuestions, onBac
               )}
             </button>
 
-            {/* Real PDF answer key export button */}
             <button
               onClick={() => generatePdf(true)}
               disabled={isGeneratingPdf || isGeneratingAnsPdf}
@@ -301,7 +614,6 @@ export default function A4Worksheet({ config, questions: initialQuestions, onBac
               )}
             </button>
 
-            {/* Fast direct browser print */}
             <button
               onClick={handlePrint}
               id="btn-worksheet-print-browser"
@@ -312,7 +624,41 @@ export default function A4Worksheet({ config, questions: initialQuestions, onBac
           </div>
         </div>
 
-        {/* Form điền nhanh thông tin học sinh */}
+        {/* Trộn nhiều dạng bài */}
+        <div className="mt-6 pt-6 border-t-2 border-slate-50 space-y-3">
+          <label className="block text-xs font-black text-slate-500 uppercase tracking-wider">
+            Chọn các dạng bài muốn trộn vào phiếu bài tập:
+          </label>
+          <div className="flex flex-wrap gap-2.5">
+            {[
+              { id: 'phep_tinh', label: 'Phép tính (+, -, ×, ÷)' },
+              { id: 'dong_ho', label: 'Xem đồng hồ 🕒' },
+              { id: 'doi_don_vi', label: 'Đổi đơn vị 📏' },
+              { id: 'toan_loi_van', label: 'Toán lời văn 📖' },
+              { id: 'so_sanh_so', label: 'So sánh số 🔍' },
+              { id: 'day_so', label: 'Dãy số 🔢' },
+              { id: 'ngay_thang', label: 'Ngày tháng 📅' },
+            ].map(item => {
+              const isChecked = selectedPdfDangs.includes(item.id as any);
+              return (
+                <button
+                  key={item.id}
+                  onClick={() => handleToggleDang(item.id as any)}
+                  className={`px-3.5 py-1.5 rounded-xl border-2 font-bold text-xs md:text-sm transition-all flex items-center gap-1.5 cursor-pointer ${
+                    isChecked
+                      ? 'bg-indigo-50 border-indigo-200 text-indigo-700'
+                      : 'bg-white border-slate-200 text-slate-500 hover:bg-slate-50'
+                  }`}
+                >
+                  {isChecked ? <CheckSquare className="w-4 h-4 text-indigo-600" /> : <Square className="w-4 h-4 text-slate-300" />}
+                  {item.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Điền nhanh thông tin học sinh */}
         <div className="mt-6 pt-6 border-t-2 border-slate-50 grid grid-cols-1 sm:grid-cols-3 gap-4 items-end">
           <div className="space-y-1.5">
             <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider">Họ và tên học sinh:</label>
@@ -353,26 +699,29 @@ export default function A4Worksheet({ config, questions: initialQuestions, onBac
         </div>
       </div>
 
-      {/* 2. VÙNG TRANG IN GIẤY A4 CHUẨN (Prints perfectly) */}
+      {/* 2. VÙNG TRANG IN GIẤY A4 CHUẨN */}
       <div 
         className="bg-white text-black p-8 md:p-12 border border-slate-200 rounded-3xl shadow-lg print:border-0 print:shadow-none print:p-0 font-sans mx-auto"
         id="a4-print-sheet"
         style={{ minHeight: '297mm', maxWidth: '210mm' }}
       >
-        {/* Header tinh gọn nhất */}
+        {/* Header phiếu bài tập */}
         <div className="border-b-2 border-slate-800 pb-3 mb-6">
+          <h1 className="text-xl font-extrabold text-slate-800 text-center mb-4 tracking-wide print:text-black">
+            {getWorksheetTitle()} {showAnswers && <span className="text-emerald-600 font-black">(ĐÁP ÁN)</span>}
+          </h1>
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 text-sm font-bold text-slate-800 print:text-black">
             <div className="flex-grow">
               Họ và tên: <span className="font-extrabold text-blue-700 print:text-black border-b border-dashed border-slate-400 inline-block min-w-[240px] pb-0.5">{studentName || '______________________'}</span>
+              {studentClass && <span className="ml-4">Lớp: <span className="font-extrabold text-blue-700 print:text-black border-b border-dashed border-slate-400 inline-block min-w-[60px] pb-0.5 text-center">{studentClass}</span></span>}
             </div>
             <div className="shrink-0 text-right print:text-left">
               Điểm số: <span className="text-slate-400 print:text-black font-extrabold border-b border-dashed border-slate-400 inline-block min-w-[100px] pb-0.5">______ / {config.totalQuestions}</span>
-              {showAnswers && <span className="ml-2 text-emerald-600 font-black">(ĐÁP ÁN)</span>}
             </div>
           </div>
         </div>
 
-        {/* Danh sách các câu hỏi */}
+        {/* Grid hiển thị các câu hỏi */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-12 gap-y-6 pt-4 text-lg font-black text-slate-800 print:text-black">
           {questions.map((q, index) => {
             const originalResult = q.operatorSymbol === '+' ? q.num1 + q.num2
@@ -380,6 +729,131 @@ export default function A4Worksheet({ config, questions: initialQuestions, onBac
               : q.operatorSymbol === '×' ? q.num1 * q.num2
               : q.num1 / q.num2;
 
+            // 1. Dạng xem đồng hồ
+            if (q.operator === 'Đồng hồ') {
+              return (
+                <div key={q.id} className="flex items-center gap-3 py-1 px-2 border-b border-dashed border-slate-100 min-h-[70px]">
+                  <span className="text-sm font-bold text-slate-400 print:text-black w-10 shrink-0">
+                    Câu {index + 1}:
+                  </span>
+                  <div className="shrink-0 scale-95">
+                    <PreviewClock hour={q.hour || 12} />
+                  </div>
+                  <div className="flex flex-col gap-0.5 justify-center">
+                    <span className="text-xs font-bold text-slate-400 print:text-black">Đồng hồ chỉ:</span>
+                    <span className="text-base font-black">
+                      <span className={`inline-block border-2 border-slate-800 rounded-lg w-14 h-9 text-center leading-8 ${showAnswers ? 'text-indigo-600 print:text-black bg-indigo-50/50' : 'text-transparent'}`}>
+                        {q.correctAnswer}
+                      </span>
+                      <span className="ml-1 text-slate-600 print:text-black font-bold">giờ</span>
+                    </span>
+                  </div>
+                </div>
+              );
+            }
+
+            // 2. Dạng toán lời văn (Spans full columns)
+            if (q.operator === 'Lời văn') {
+              return (
+                <div key={q.id} className="sm:col-span-2 flex flex-col gap-2 py-3 px-2 border-b border-dashed border-slate-100">
+                  <div className="flex items-start gap-2">
+                    <span className="text-sm font-bold text-slate-400 print:text-black w-10 shrink-0 mt-0.5">
+                      Câu {index + 1}:
+                    </span>
+                    <p className="text-base font-bold text-slate-700 print:text-black leading-relaxed">
+                      {q.wordProblemText}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2 pl-12">
+                    <span className="text-sm font-bold text-slate-400 print:text-black">Đáp án:</span>
+                    <span className={`inline-block border-2 border-slate-800 rounded-lg w-24 h-9 text-center leading-8 font-black ${showAnswers ? 'text-indigo-600 print:text-black bg-indigo-50/50' : 'text-transparent'}`}>
+                      {q.correctAnswer}
+                    </span>
+                  </div>
+                </div>
+              );
+            }
+
+            // 3. Dạng so sánh số
+            if (q.operator === 'So sánh') {
+              return (
+                <div key={q.id} className="flex items-center gap-1 py-1 px-2 border-b border-dashed border-slate-100">
+                  <span className="text-sm font-bold text-slate-400 print:text-black w-10 shrink-0">
+                    Câu {index + 1}:
+                  </span>
+                  <div className="flex items-center gap-2 text-base font-black text-slate-800 print:text-black flex-grow">
+                    <span>{q.compLeft}</span>
+                    <span className={`inline-block border-2 border-dashed border-slate-400 rounded-lg w-12 h-9 text-center leading-8 font-black ${showAnswers ? 'border-solid border-slate-800 text-indigo-600 print:text-black bg-indigo-50/50' : 'text-transparent'}`}>
+                      {q.correctAnswer}
+                    </span>
+                    <span>{q.compRight}</span>
+                  </div>
+                </div>
+              );
+            }
+
+            // 4. Dạng dãy số
+            if (q.operator === 'Dãy số') {
+              return (
+                <div key={q.id} className="flex items-center gap-1 py-1 px-2 border-b border-dashed border-slate-100">
+                  <span className="text-sm font-bold text-slate-400 print:text-black w-10 shrink-0">
+                    Câu {index + 1}:
+                  </span>
+                  <div className="flex items-center gap-2 text-base font-black text-slate-800 print:text-black flex-grow">
+                    {q.sequence?.map((num, idx) => {
+                      if (idx === q.missingIndex) {
+                        return (
+                          <span key={idx} className={`inline-block border-2 border-slate-800 rounded-lg w-14 h-9 text-center leading-8 font-black ${showAnswers ? 'text-indigo-600 print:text-black bg-indigo-50/50' : 'text-transparent'}`}>
+                            {q.correctAnswer}
+                          </span>
+                        );
+                      }
+                      return <span key={idx} className="text-slate-600 print:text-black">{num}</span>;
+                    })}
+                  </div>
+                </div>
+              );
+            }
+
+            // 5. Dạng đổi đơn vị
+            if (q.operator === 'Đổi đơn vị') {
+              return (
+                <div key={q.id} className="flex items-center gap-1 py-1 px-2 border-b border-dashed border-slate-100">
+                  <span className="text-sm font-bold text-slate-400 print:text-black w-10 shrink-0">
+                    Câu {index + 1}:
+                  </span>
+                  <div className="flex items-center gap-2 text-base font-black text-slate-800 print:text-black flex-grow">
+                    <span>{q.num1} {q.fromUnit}</span>
+                    <span className="text-slate-400">=</span>
+                    <span className={`inline-block border-2 border-slate-800 rounded-lg w-20 h-9 text-center leading-8 font-black ${showAnswers ? 'text-indigo-600 print:text-black bg-indigo-50/50' : 'text-transparent'}`}>
+                      {q.correctAnswer}
+                    </span>
+                    <span className="text-slate-600 print:text-black font-bold">{q.toUnit}</span>
+                  </div>
+                </div>
+              );
+            }
+
+            // 5.5. Dạng ngày tháng
+            if (q.operator === 'Ngày tháng') {
+              const isFeb = q.text.includes('Tháng 2') || q.text.includes('tháng 2');
+              const ansDisplay = isFeb ? '28 hoặc 29 ngày' : q.correctAnswer;
+              return (
+                <div key={q.id} className="flex items-center gap-1 py-1 px-2 border-b border-dashed border-slate-100 min-h-[50px]">
+                  <span className="text-sm font-bold text-slate-400 print:text-black w-10 shrink-0">
+                    Câu {index + 1}:
+                  </span>
+                  <div className="flex flex-wrap items-center gap-1.5 text-base font-bold text-slate-700 print:text-black flex-grow">
+                    <span>{q.text}</span>
+                    <span className={`inline-block border-2 border-slate-800 rounded-lg px-2 h-9 text-center leading-8 font-black ${showAnswers ? 'text-indigo-600 print:text-black bg-indigo-50/50 font-sans text-sm' : 'text-transparent min-w-[50px]'}`}>
+                      {ansDisplay}
+                    </span>
+                  </div>
+                </div>
+              );
+            }
+
+            // 6. Nhóm các phép tính cơ bản
             return (
               <div key={q.id} className="flex items-center gap-1 py-1 px-2 border-b border-dashed border-slate-100">
                 <span className="text-sm font-bold text-slate-400 print:text-black w-10 shrink-0">
@@ -425,7 +899,7 @@ export default function A4Worksheet({ config, questions: initialQuestions, onBac
         </div>
 
         {/* Hết nội dung */}
-        <div className="mt-8 pt-4 border-t border-slate-100 text-center text-xs font-bold text-slate-300 print:text-slate-400">
+        <div className="mt-12 pt-4 border-t border-slate-100 text-center text-xs font-bold text-slate-300 print:text-slate-400">
           - Hết nội dung -
         </div>
       </div>

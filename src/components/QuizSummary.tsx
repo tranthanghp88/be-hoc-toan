@@ -150,30 +150,105 @@ export default function QuizSummary({ config, history, correctCount, onReset }: 
                   <div>
                     <div className="font-sans font-black text-lg text-slate-700 flex items-center gap-1.5 flex-wrap">
                       {(() => {
-                        const originalResult = item.question.operatorSymbol === '+' ? item.question.num1 + item.question.num2
-                          : item.question.operatorSymbol === '-' ? item.question.num1 - item.question.num2
-                          : item.question.operatorSymbol === '×' ? item.question.num1 * item.question.num2
-                          : item.question.num1 / item.question.num2;
+                        const q = item.question;
                         
-                        if (item.question.isMissingNumber && item.question.missingPosition === 'left') {
+                        if (q.operator === 'Đồng hồ') {
+                          return (
+                            <>
+                              <span>Đồng hồ chỉ:</span>
+                              <span className="text-indigo-600 font-extrabold bg-indigo-50 border border-indigo-200 px-2 py-0.5 rounded-xl shadow-sm mx-1">
+                                {q.correctAnswer}
+                              </span>
+                              <span>giờ</span>
+                            </>
+                          );
+                        }
+                        
+                        if (q.operator === 'Đổi đơn vị') {
+                          return (
+                            <>
+                              <span>{q.num1} {q.fromUnit}</span>
+                              <span className="text-blue-500">=</span>
+                              <span className="text-indigo-600 font-extrabold bg-indigo-50 border border-indigo-200 px-2 py-0.5 rounded-xl shadow-sm mx-1">
+                                {q.correctAnswer}
+                              </span>
+                              <span>{q.toUnit}</span>
+                            </>
+                          );
+                        }
+                        
+                        if (q.operator === 'Lời văn') {
+                          return (
+                            <div className="text-sm font-semibold text-slate-600 max-w-md line-clamp-2">
+                              {q.wordProblemText} ➔ <span className="text-indigo-600 font-extrabold bg-indigo-50 border border-indigo-200 px-1.5 py-0.5 rounded-lg shadow-sm">{q.correctAnswer}</span>
+                            </div>
+                          );
+                        }
+                        
+                        if (q.operator === 'So sánh') {
+                          return (
+                            <>
+                              <span>{q.compLeft}</span>
+                              <span className="text-indigo-600 font-extrabold bg-indigo-50 border border-indigo-200 px-2.5 py-0.5 rounded-xl shadow-sm mx-1">
+                                {q.correctAnswer}
+                              </span>
+                              <span>{q.compRight}</span>
+                            </>
+                          );
+                        }
+                        
+                        if (q.operator === 'Dãy số') {
+                          return (
+                            <div className="flex items-center gap-1.5">
+                              {q.sequence?.map((num, idx) => {
+                                if (idx === q.missingIndex) {
+                                  return (
+                                    <span key={idx} className="text-indigo-600 font-extrabold bg-indigo-50 border border-indigo-200 px-1.5 py-0.5 rounded-lg shadow-sm">
+                                      {q.correctAnswer}
+                                    </span>
+                                  );
+                                }
+                                return <span key={idx}>{num}</span>;
+                              })}
+                            </div>
+                          );
+                        }
+                        
+                        if (q.operator === 'Ngày tháng') {
+                          const isFeb = q.text.includes('Tháng 2') || q.text.includes('tháng 2');
+                          const ansDisplay = isFeb ? '28 hoặc 29 ngày' : q.correctAnswer;
+                          return (
+                            <div className="text-sm font-semibold text-slate-600 max-w-md">
+                              {q.text} ➔ <span className="text-indigo-600 font-extrabold bg-indigo-50 border border-indigo-200 px-1.5 py-0.5 rounded-lg shadow-sm font-sans">{ansDisplay}</span>
+                            </div>
+                          );
+                        }
+
+                        // Nhóm cơ bản
+                        const originalResult = q.operatorSymbol === '+' ? q.num1 + q.num2
+                          : q.operatorSymbol === '-' ? q.num1 - q.num2
+                          : q.operatorSymbol === '×' ? q.num1 * q.num2
+                          : q.num1 / q.num2;
+                        
+                        if (q.isMissingNumber && q.missingPosition === 'left') {
                           return (
                             <>
                               <span className="text-indigo-600 font-extrabold bg-indigo-50 border border-indigo-200 px-2 py-0.5 rounded-xl shadow-sm">
-                                {item.question.correctAnswer}
+                                {q.correctAnswer}
                               </span>
-                              <span className="text-blue-500">{item.question.operatorSymbol}</span>
-                              <span>{item.question.num2}</span>
+                              <span className="text-blue-500">{q.operatorSymbol}</span>
+                              <span>{q.num2}</span>
                               <span className="text-slate-400">=</span>
                               <span>{originalResult}</span>
                             </>
                           );
-                        } else if (item.question.isMissingNumber && item.question.missingPosition === 'right') {
+                        } else if (q.isMissingNumber && q.missingPosition === 'right') {
                           return (
                             <>
-                              <span>{item.question.num1}</span>
-                              <span className="text-blue-500">{item.question.operatorSymbol}</span>
+                              <span>{q.num1}</span>
+                              <span className="text-blue-500">{q.operatorSymbol}</span>
                               <span className="text-indigo-600 font-extrabold bg-indigo-50 border border-indigo-200 px-2 py-0.5 rounded-xl shadow-sm">
-                                {item.question.correctAnswer}
+                                {q.correctAnswer}
                               </span>
                               <span className="text-slate-400">=</span>
                               <span>{originalResult}</span>
@@ -182,19 +257,15 @@ export default function QuizSummary({ config, history, correctCount, onReset }: 
                         } else {
                           return (
                             <>
-                              <span>{item.question.num1}</span>
-                              <span className="text-blue-500">{item.question.operatorSymbol}</span>
-                              <span>{currentQuestion_or_num2(item)}</span>
+                              <span>{q.num1}</span>
+                              <span className="text-blue-500">{q.operatorSymbol}</span>
+                              <span>{q.num2}</span>
                               <span className="text-slate-400">=</span>
                               <span className="text-indigo-600 font-extrabold bg-indigo-50 border border-indigo-200 px-2 py-0.5 rounded-xl shadow-sm">
-                                {item.question.correctAnswer}
+                                {q.correctAnswer}
                               </span>
                             </>
                           );
-                        }
-
-                        function currentQuestion_or_num2(histItem: any) {
-                          return histItem.question.num2;
                         }
                       })()}
                     </div>
