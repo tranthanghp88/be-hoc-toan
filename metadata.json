@@ -1,0 +1,6 @@
+{
+  "name": "Bé Học Toán",
+  "description": "Ứng dụng học toán tương tác vui nhộn dành cho học sinh lớp 3",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
